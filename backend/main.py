@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List
 from rag import query_documents, index_documents
 import os
 
@@ -13,8 +14,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class Message(BaseModel):
+    role: str
+    content: str
+
 class Question(BaseModel):
     question: str
+    history: List[Message] = []
 
 @app.on_event("startup")
 async def startup():
@@ -26,8 +32,9 @@ async def startup():
 async def ask(q: Question):
     if not q.question.strip():
         raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
-    answer = query_documents(q.question)
-    return {"answer": answer}
+    history = [{"role": m.role, "content": m.content} for m in q.history]
+    result = query_documents(q.question, history)
+    return {"answer": result["answer"], "sources": result["sources"]}
 
 @app.get("/health")
 async def health():

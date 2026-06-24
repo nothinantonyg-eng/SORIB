@@ -357,6 +357,49 @@
       color: var(--muted);
       margin-top: 10px;
     }
+
+    /* Fuentes */
+    .sources {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .source-tag {
+      background: rgba(0, 212, 170, 0.08);
+      border: 1px solid rgba(0, 212, 170, 0.2);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--accent2);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .source-tag::before {
+      content: '📄';
+      font-size: 10px;
+    }
+
+    /* Botón limpiar */
+    .clear-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .clear-btn:hover {
+      border-color: #ff4444;
+      color: #ff4444;
+    }
   </style>
 </head>
 <body>
@@ -371,6 +414,7 @@
     <div class="status-dot"></div>
     En línea
   </div>
+  <button class="clear-btn" onclick="clearChat()">🗑 Limpiar</button>
 </header>
 
 <div id="chat">
@@ -402,7 +446,9 @@
   const chat = document.getElementById('chat');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send-btn');
-  const API = 'http://127.0.0.1:8000/ask';
+  const API = 'https://chowder-crayon-unselect.ngrok-free.dev/ask';
+
+  let history = [];
 
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -421,7 +467,24 @@
     sendMessage();
   }
 
-  function addMessage(text, role) {
+  function clearChat() {
+    history = [];
+    chat.innerHTML = `
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">IB</div>
+        <h2>Hola, soy SORIB</h2>
+        <p>Tu asesor académico del Programa del Diploma IB del COAR Lima. Puedo responder preguntas sobre cursos, evaluaciones, criterios y requisitos del programa.</p>
+        <div class="suggestions">
+          <div class="suggestion" onclick="sendSuggestion(this)">¿Qué es la Monografía?</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Criterios de evaluación de Matemáticas</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">¿Cómo funciona el CAS?</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">Requisitos para el Diploma IB</div>
+          <div class="suggestion" onclick="sendSuggestion(this)">¿Qué es Teoría del Conocimiento?</div>
+        </div>
+      </div>`;
+  }
+
+  function addMessage(text, role, sources = []) {
     const welcome = document.getElementById('welcome');
     if (welcome) welcome.remove();
 
@@ -435,6 +498,20 @@
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.innerHTML = role === 'bot' ? marked.parse(text) : text;
+
+    // Mostrar fuentes si existen
+    if (role === 'bot' && sources.length > 0) {
+      const sourcesDiv = document.createElement('div');
+      sourcesDiv.className = 'sources';
+      sources.forEach(src => {
+        const tag = document.createElement('span');
+        tag.className = 'source-tag';
+        // Limpiar nombre del archivo
+        tag.textContent = src.replace(/\.[^/.]+$/, '').substring(0, 40);
+        sourcesDiv.appendChild(tag);
+      });
+      bubble.appendChild(sourcesDiv);
+    }
 
     msg.appendChild(avatar);
     msg.appendChild(bubble);
@@ -474,18 +551,24 @@
     addMessage(text, 'user');
     addTyping();
 
+    const recentHistory = history.slice(-10);
+
     try {
       const res = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: text })
+        body: JSON.stringify({ question: text, history: recentHistory })
       });
       const data = await res.json();
       removeTyping();
-      addMessage(data.answer, 'bot');
+      addMessage(data.answer, 'bot', data.sources || []);
+
+      history.push({ role: 'user', content: text });
+      history.push({ role: 'assistant', content: data.answer });
+
     } catch (err) {
       removeTyping();
-      addMessage('Error al conectar con el servidor. Asegúrate de que el backend esté corriendo.', 'bot');
+      addMessage('Error al conectar con el servidor.', 'bot');
     }
 
     sendBtn.disabled = false;

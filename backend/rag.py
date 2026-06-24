@@ -74,82 +74,86 @@ def index_documents():
         documents, storage_context=storage_context)
     print("Indexación completada.")
 
-def query_documents(question: str) -> str:
+def query_documents(question: str, history: list = []) -> dict:
     global _index
 
-    # Si no es pregunta sobre IB/COAR, responde directamente
+    def build_messages(system_prompt, extra_user_content=None):
+        messages = [{"role": "system", "content": system_prompt}]
+        for msg in history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": extra_user_content or question})
+        return messages
+
     if not is_ib_question(question):
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """Eres SORIB, un asistente académico del Programa del 
-Diploma IB del COAR Lima. Responde de forma clara y útil en español. 
-Si te preguntan algo sobre el IB o el COAR, indica que puedes buscar 
-en los documentos oficiales para una respuesta más precisa."""
-                },
-                {"role": "user", "content": question}
-            ],
+            messages=build_messages(
+                """Eres SORIB, un asistente académico del Programa del 
+Diploma IB del COAR Lima. Responde siempre en el mismo idioma 
+en que el usuario escribió su pregunta. Si te preguntan algo 
+sobre el IB o el COAR, indica que puedes buscar en los documentos 
+oficiales para una respuesta más precisa."""
+            ),
             temperature=0.5,
             max_tokens=1024,
         )
-        return response.choices[0].message.content
+        return {"answer": response.choices[0].message.content, "sources": []}
 
-    # Si es sobre IB/COAR, busca en documentos
     if _index is None:
-        return "Error: documentos no indexados."
+        return {"answer": "Error: documentos no indexados.", "sources": []}
 
     retriever = _index.as_retriever(similarity_top_k=12)
     nodes = retriever.retrieve(question)
 
     context_parts = []
+    sources = []
+
     for node in nodes:
         text = node.text.strip()
         if is_clean(text):
             context_parts.append(text)
+            # Extraer nombre del archivo fuente
+            filename = ""
+            if hasattr(node, "metadata") and node.metadata:
+                filename = (
+                    node.metadata.get("file_name")
+                    or node.metadata.get("filename")
+                    or node.metadata.get("source")
+                    or ""
+                )
+            if filename and filename not in sources:
+                sources.append(filename)
 
     if not context_parts:
-        # Si no encuentra nada limpio, responde con conocimiento propio
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """Eres SORIB, un asistente académico especializado 
-en el Programa del Diploma IB. Responde en español con tu conocimiento 
-general del IB, siendo claro y preciso."""
-                },
-                {"role": "user", "content": question}
-            ],
+            messages=build_messages(
+                """Eres SORIB, un asistente académico especializado en el Programa 
+del Diploma IB. Responde siempre en el mismo idioma en que el usuario 
+escribió su pregunta. Sé claro y preciso."""
+            ),
             temperature=0.3,
             max_tokens=1024,
         )
-        return response.choices[0].message.content
+        return {"answer": response.choices[0].message.content, "sources": []}
 
     context = "\n\n".join(context_parts[:5])
-
-    prompt = f"""Eres SORIB, un asistente académico especializado en el Programa 
+    system_prompt = f"""Eres SORIB, un asistente académico especializado en el Programa 
 del Diploma del Bachillerato Internacional (IB) del COAR Lima.
 
-Responde de forma clara y estructurada basándote en el contexto proporcionado.
-- Responde siempre en español
+Responde siempre en el mismo idioma en que el usuario escribió su pregunta.
 - No generes preguntas adicionales al final
 - Si los criterios de evaluación están en el contexto, listarlos claramente
 - Si el contexto no es suficiente, complementa con tu conocimiento del IB
 
 Contexto de documentos oficiales:
-{context}
-
-Pregunta: {question}
-
-Respuesta:"""
+{context}"""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
+        messages=build_messages(system_prompt),
         temperature=0.2,
         max_tokens=1024,
     )
 
-    return response.choices[0].message.content
+    return {"answer": response.choices[0].message.content, "sources": sources[:3]}
